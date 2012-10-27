@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Linq;
@@ -38,7 +39,13 @@ namespace Raven.Bundles.IndexedProperties
 			private readonly IndexedPropertiesSetupDoc setupDoc;
 			private readonly string index;
 			private readonly AbstractViewGenerator viewGenerator;
-			private readonly ConcurrentSet<string> itemsToRemove = new ConcurrentSet<string>(StringComparer.InvariantCultureIgnoreCase);
+			private readonly ConcurrentDictionary<string, PropsState> items = new ConcurrentDictionary<string, PropsState>();
+
+			public class PropsState
+			{
+				public bool Deleted { get; set; }
+				public Dictionary<string, RavenJToken> Values { get; set; }
+			}
 
 			public IndexPropertyBatcher(DocumentDatabase database, IndexedPropertiesSetupDoc setupDoc, string index, AbstractViewGenerator viewGenerator)
 			{
@@ -57,7 +64,10 @@ namespace Raven.Bundles.IndexedProperties
 				{
 					// Just a document id
 					log.Debug("Queueing {0} for removal of indexed properties", entryKey);
-					itemsToRemove.Add(entryKey);
+					items.TryAdd(entryKey, new PropsState
+						{
+							Deleted = true
+						});
 					return;
 				}
 
@@ -80,7 +90,10 @@ namespace Raven.Bundles.IndexedProperties
 				}
 
 				log.Debug("Queueing {0} for removal of indexed properties", documentId);
-				itemsToRemove.Add(documentId);
+				items.TryAdd(documentId, new PropsState
+					{
+						Deleted = true
+					});
 			}
 
 			public override void OnIndexEntryCreated(string entryKey, Document document)
@@ -94,33 +107,11 @@ namespace Raven.Bundles.IndexedProperties
 
 				var documentId = resultDocId.StringValue;
 
-				if (itemsToRemove.TryRemove(documentId))
-					log.Debug("Removing {0} from queue for indexed property removal.", documentId);
+				PropsState _;
+				if (items.TryRemove(documentId, out _))
+					log.Debug("Removing {0} from queue for indexed property state.", documentId);
 
-				var resultDoc = database.Get(documentId, null);
-				if (resultDoc == null)
-				{
-					log.Warn("Could not find a document with the id '{0}' for index '{1}'", documentId, index);
-					return;
-				}
-
-				var entityName = resultDoc.Metadata.Value<string>(Constants.RavenEntityName);
-				if (entityName != null && viewGenerator.ForEntityNames.Contains(entityName))
-				{
-					log.Warn(
-						"Rejected update for a potentially recursive update on document '{0}' because the index '{1}' includes documents with entity name of '{2}'",
-						documentId, index, entityName);
-					return;
-				}
-				if (viewGenerator.ForEntityNames.Count == 0)
-				{
-					log.Warn(
-						"Rejected update for a potentially recursive update on document '{0}' because the index '{1}' includes all documents",
-						documentId, index);
-					return;
-				}
-
-				var changed = false;
+				var props = new Dictionary<string, RavenJToken>();
 				foreach (var mapping in setupDoc.FieldNameMappings)
 				{
 					var field =
@@ -130,14 +121,13 @@ namespace Raven.Bundles.IndexedProperties
 					if (field == null)
 						continue;
 
-					changed = true;
 					var value = GetValue(document, mapping.Key, field);
-					log.Debug("In {0}, setting {1} = {2}", resultDoc.Key, mapping.Value, value);
-					resultDoc.DataAsJson[mapping.Value] = value;
+					props[mapping.Value] = value;
 				}
-
-				if (changed)
-					database.Put(resultDoc.Key, resultDoc.Etag, resultDoc.DataAsJson, resultDoc.Metadata, null);
+				items.TryAdd(documentId, new PropsState
+					{
+						Values = props
+					});
 			}
 
 			private RavenJToken GetValue(Document document, string fieldName, IFieldable field)
@@ -181,28 +171,56 @@ namespace Raven.Bundles.IndexedProperties
 
 			public override void Dispose()
 			{
-				log.Debug("Disposing {0}, {1} documents to update", GetType(), itemsToRemove.Count);
+				log.Debug("Disposing {0}, {1} documents to update", GetType(), items.Count);
 
-				foreach (var documentId in itemsToRemove)
+				foreach (var stat in items)
 				{
-					var resultDoc = database.Get(documentId, null);
+					var resultDoc = database.Get(stat.Key, null);
 					if (resultDoc == null)
 					{
-						log.Warn("Could not find a document with the id '{0}' for index '{1}", documentId, index);
-						return;
+						log.Warn("Could not find a document with the id '{0}' for index '{1}", stat, index);
+						continue;
+					}
+					var entityName = resultDoc.Metadata.Value<string>(Constants.RavenEntityName);
+					if (entityName != null && viewGenerator.ForEntityNames.Contains(entityName))
+					{
+						log.Warn(
+							"Rejected update for a potentially recursive update on document '{0}' because the index '{1}' includes documents with entity name of '{2}'",
+							stat.Key, index, entityName);
+						continue;
+					}
+					if (viewGenerator.ForEntityNames.Count == 0)
+					{
+						log.Warn(
+							"Rejected update for a potentially recursive update on document '{0}' because the index '{1}' includes all documents",
+							stat.Key, index);
+						continue;
 					}
 					var changesMade = false;
-					foreach (var mapping in from mapping in setupDoc.FieldNameMappings
-											where resultDoc.DataAsJson.ContainsKey(mapping.Value)
-											select mapping)
+					if (stat.Value.Deleted)
 					{
-						resultDoc.DataAsJson.Remove(mapping.Value);
-						log.Debug("Removing {0} from {1}", mapping.Value, resultDoc.Key);
-						changesMade = true;
+						foreach (var mapping in from mapping in setupDoc.FieldNameMappings
+						                        where resultDoc.DataAsJson.ContainsKey(mapping.Value)
+						                        select mapping)
+						{
+							resultDoc.DataAsJson.Remove(mapping.Value);
+							log.Debug("Removing {0} from {1}", mapping.Value, resultDoc.Key);
+							changesMade = true;
+						}
+					}
+					else
+					{
+						foreach (var value in stat.Value.Values)
+						{
+							changesMade = true;
+							resultDoc.DataAsJson[value.Key] = value.Value;
+							log.Debug("Setting {0} to {1} on {2}", value.Key, value.Value, resultDoc.Key);
+						}
+
 					}
 					if (changesMade)
-						database.Put(documentId, resultDoc.Etag, resultDoc.DataAsJson, resultDoc.Metadata, null);
-
+						database.Put(stat.Key, resultDoc.Etag, resultDoc.DataAsJson, resultDoc.Metadata, null);
+				
 				}
 
 				base.Dispose();
