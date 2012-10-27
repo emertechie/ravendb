@@ -48,42 +48,42 @@ namespace Raven.Bundles.IndexedProperties
 				this.viewGenerator = viewGenerator;
 			}
 
-            public override void OnIndexEntryDeleted(string entryKey)
-            {
-                if (entryKey == null)
-                    return;
+			public override void OnIndexEntryDeleted(string entryKey)
+			{
+				if (entryKey == null)
+					return;
 
-                if (!entryKey.TrimStart().StartsWith("{"))
-                {
-                    // Just a document id
-                    log.Debug("Queueing {0} for removal of indexed properties", entryKey);
-                    itemsToRemove.Add(entryKey);
-                    return;
-                }
+				if (!entryKey.TrimStart().StartsWith("{"))
+				{
+					// Just a document id
+					log.Debug("Queueing {0} for removal of indexed properties", entryKey);
+					itemsToRemove.Add(entryKey);
+					return;
+				}
 
-                RavenJObject entry;
-                try
-                {
-                    entry = RavenJObject.Parse(entryKey);
-                }
-                catch (Exception e)
-                {
-                    log.WarnException("Could not properly parse entry key for index: " + index, e);
-                    return;
-                }
-                var documentId = entry.Value<string>(setupDoc.DocumentKey);
-                if (documentId == null)
-                {
-                    log.Warn("Could not find document id property '{0}' in '{1}' for index '{2}'", setupDoc.DocumentKey,
-                             entryKey, index);
-                    return;
-                }
+				RavenJObject entry;
+				try
+				{
+					entry = RavenJObject.Parse(entryKey);
+				}
+				catch (Exception e)
+				{
+					log.WarnException("Could not properly parse entry key for index: " + index, e);
+					return;
+				}
+				var documentId = entry.Value<string>(setupDoc.DocumentKey);
+				if (documentId == null)
+				{
+					log.Warn("Could not find document id property '{0}' in '{1}' for index '{2}'", setupDoc.DocumentKey,
+							 entryKey, index);
+					return;
+				}
 
-                log.Debug("Queueing {0} for removal of indexed properties", documentId);
-                itemsToRemove.Add(documentId);
-            }
+				log.Debug("Queueing {0} for removal of indexed properties", documentId);
+				itemsToRemove.Add(documentId);
+			}
 
-		    public override void OnIndexEntryCreated(string entryKey, Document document)
+			public override void OnIndexEntryCreated(string entryKey, Document document)
 			{
 				var resultDocId = document.GetField(setupDoc.DocumentKey);
 				if (resultDocId == null)
@@ -95,7 +95,7 @@ namespace Raven.Bundles.IndexedProperties
 				var documentId = resultDocId.StringValue;
 
 				if (itemsToRemove.TryRemove(documentId))
-                    log.Debug("Removing {0} from queue for indexed property removal.", documentId);
+					log.Debug("Removing {0} from queue for indexed property removal.", documentId);
 
 				var resultDoc = database.Get(documentId, null);
 				if (resultDoc == null)
@@ -105,14 +105,14 @@ namespace Raven.Bundles.IndexedProperties
 				}
 
 				var entityName = resultDoc.Metadata.Value<string>(Constants.RavenEntityName);
-				if(entityName != null && viewGenerator.ForEntityNames.Contains(entityName))
+				if (entityName != null && viewGenerator.ForEntityNames.Contains(entityName))
 				{
 					log.Warn(
 						"Rejected update for a potentially recursive update on document '{0}' because the index '{1}' includes documents with entity name of '{2}'",
 						documentId, index, entityName);
 					return;
 				}
-				if(viewGenerator.ForEntityNames.Count == 0)
+				if (viewGenerator.ForEntityNames.Count == 0)
 				{
 					log.Warn(
 						"Rejected update for a potentially recursive update on document '{0}' because the index '{1}' includes all documents",
@@ -120,68 +120,68 @@ namespace Raven.Bundles.IndexedProperties
 					return;
 				}
 
-		        var changed = false;
+				var changed = false;
 				foreach (var mapping in setupDoc.FieldNameMappings)
 				{
-					var field = 
+					var field =
 						document.GetFieldable(mapping.Key + "_Range") ??
 						document.GetFieldable(mapping.Key);
 
 					if (field == null)
 						continue;
 
-				    changed = true;
-                    var value = GetValue(document, mapping.Key, field);
-				    log.Debug("In {0}, setting {1} = {2}", resultDoc.Key, mapping.Value, value);
-				    resultDoc.DataAsJson[mapping.Value] = value;
+					changed = true;
+					var value = GetValue(document, mapping.Key, field);
+					log.Debug("In {0}, setting {1} = {2}", resultDoc.Key, mapping.Value, value);
+					resultDoc.DataAsJson[mapping.Value] = value;
 				}
 
-                if (changed)
-                    database.Put(resultDoc.Key, resultDoc.Etag, resultDoc.DataAsJson, resultDoc.Metadata, null);
+				if (changed)
+					database.Put(resultDoc.Key, resultDoc.Etag, resultDoc.DataAsJson, resultDoc.Metadata, null);
 			}
 
-            private RavenJToken GetValue(Document document, string fieldName, IFieldable field)
-            {
-                var isArray = document.GetFieldable(fieldName + "_IsArray") != null;
-
-                if (isArray)
-                    return new RavenJArray(GetValues(document, fieldName, field));
-                
-                return GetSingleValue(document, fieldName, field);
-            }
-
-            private RavenJToken GetSingleValue(Document document, string fieldName, IFieldable field)
-            {
-                var isJson = document.GetFieldable(fieldName + "_ConvertToJson") != null;
-
-                if (isJson)
-                    return GetComplexValue(field);
-
-                if (field as NumericField != null)
-                    return GetNumericValue((NumericField) field);
-
-                return field.StringValue;
-            }
-
-            private RavenJObject GetComplexValue(IFieldable field)
-            {
-                return RavenJObject.Parse(field.StringValue);
-            }
-
-            private RavenJToken GetNumericValue(NumericField field)
-            {
-                return new RavenJValue(field.NumericValue);
-            }
-
-		    private IEnumerable<RavenJToken> GetValues(Document document, string fieldName, IFieldable field)
-		    {
-		        return document.GetFieldables(field.Name)
-		            .Select(f => GetSingleValue(document, fieldName, field));
-		    }
-
-		    public override void Dispose()
+			private RavenJToken GetValue(Document document, string fieldName, IFieldable field)
 			{
-                log.Debug("Disposing {0}, {1} documents to update", GetType(), itemsToRemove.Count);
+				var isArray = document.GetFieldable(fieldName + "_IsArray") != null;
+
+				if (isArray)
+					return new RavenJArray(GetValues(document, fieldName, field));
+
+				return GetSingleValue(document, fieldName, field);
+			}
+
+			private RavenJToken GetSingleValue(Document document, string fieldName, IFieldable field)
+			{
+				var isJson = document.GetFieldable(fieldName + "_ConvertToJson") != null;
+
+				if (isJson)
+					return GetComplexValue(field);
+
+				if (field as NumericField != null)
+					return GetNumericValue((NumericField)field);
+
+				return field.StringValue;
+			}
+
+			private RavenJObject GetComplexValue(IFieldable field)
+			{
+				return RavenJObject.Parse(field.StringValue);
+			}
+
+			private RavenJToken GetNumericValue(NumericField field)
+			{
+				return new RavenJValue(field.NumericValue);
+			}
+
+			private IEnumerable<RavenJToken> GetValues(Document document, string fieldName, IFieldable field)
+			{
+				return document.GetFieldables(field.Name)
+					.Select(f => GetSingleValue(document, fieldName, field));
+			}
+
+			public override void Dispose()
+			{
+				log.Debug("Disposing {0}, {1} documents to update", GetType(), itemsToRemove.Count);
 
 				foreach (var documentId in itemsToRemove)
 				{
@@ -197,12 +197,12 @@ namespace Raven.Bundles.IndexedProperties
 											select mapping)
 					{
 						resultDoc.DataAsJson.Remove(mapping.Value);
-                        log.Debug("Removing {0} from {1}", mapping.Value, resultDoc.Key);
+						log.Debug("Removing {0} from {1}", mapping.Value, resultDoc.Key);
 						changesMade = true;
 					}
 					if (changesMade)
 						database.Put(documentId, resultDoc.Etag, resultDoc.DataAsJson, resultDoc.Metadata, null);
-		
+
 				}
 
 				base.Dispose();
