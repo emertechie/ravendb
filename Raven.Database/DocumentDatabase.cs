@@ -17,9 +17,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Transactions;
+using ICSharpCode.NRefactory.CSharp;
 using Raven.Abstractions.Logging;
 using Raven.Abstractions.Util;
 using Raven.Database.Commercial;
+using Raven.Database.Linq.Ast.QueryRewrite;
 using Raven.Database.Server;
 using Raven.Database.Server.Connections;
 using Raven.Database.Util;
@@ -897,6 +899,11 @@ namespace Raven.Database
 				throw new ArgumentNullException("name");
 			name = name.Trim();
 
+			definition.Maps = new HashSet<string>(definition.Maps.Select(SimplifyIndexFunctionExpression));
+			definition.Reduce = SimplifyIndexFunctionExpression(definition.Reduce);
+			definition.TransformResults = SimplifyIndexFunctionExpression(definition.TransformResults);
+
+
 			switch (FindIndexCreationOptions(definition, ref name))
 			{
 				case IndexCreationOptions.Noop:
@@ -934,6 +941,23 @@ namespace Raven.Database
 			}));
 
 			return name;
+		}
+
+		private string SimplifyIndexFunctionExpression(string code)
+		{
+			if(code == null)
+				return null;
+
+			var expr = new CSharpParser().ParseExpression(code);
+			// Wrap expression in parenthesized expression, this is necessary because the transformations
+			// can't replace the root node of the syntax tree
+			expr = new ParenthesizedExpression(expr);
+			// Apply transformations
+			new IntroduceQueryExpressions().Run(expr);
+			new CombineQueryExpressions().Run(expr);
+			// Unwrap expression
+			expr = ((ParenthesizedExpression)expr).Expression;
+			return expr.GetText(FormattingOptionsFactory.CreateAllman());
 		}
 
 		private IndexCreationOptions FindIndexCreationOptions(IndexDefinition definition, ref string name)

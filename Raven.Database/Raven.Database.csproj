@@ -186,6 +186,9 @@
     <Compile Include="Indexing\IndexingUtil.cs" />
     <Compile Include="Indexing\LuceneIntegration\TermsMatchQuery.cs" />
     <Compile Include="Json\ScriptsCache.cs" />
+    <Compile Include="Linq\Ast\QueryRewrite\IntroduceQueryExpressions.cs" />
+    <Compile Include="Linq\Ast\QueryRewrite\CombineQueryExpressions.cs" />
+    <Compile Include="Linq\Ast\QueryRewrite\NRefactoryExtensions.cs" />
     <Compile Include="Linq\Ast\ThrowOnInvalidMethodCallsForTransformResults.cs" />
     <Compile Include="Linq\Ast\TransformObsoleteMethods.cs" />
     <Compile Include="Linq\CodeVerifier.cs" />
