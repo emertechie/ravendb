@@ -864,15 +864,7 @@ namespace Raven.Storage.Esent.StorageActions
 				() =>
 				{
 					
-					var decrementedValue =
-						Api.RetrieveColumnAsInt32(session, ReduceKeysCounts,
-						                          tableColumnsCache.ReduceKeysCountsColumns["mapped_items_count"]).Value - 1;
-
-					if (decrementedValue > 0)
-					{
-						Api.EscrowUpdate(session, ReduceKeysCounts, tableColumnsCache.ReduceKeysCountsColumns["mapped_items_count"], -1);
-					}
-					else
+					if (Api.EscrowUpdate(session, ReduceKeysCounts, tableColumnsCache.ReduceKeysCountsColumns["mapped_items_count"], -1) == 1)
 					{
 						Api.JetDelete(session, ReduceKeysCounts);
 						removeReducedKeyStatus = true;
